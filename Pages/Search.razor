@@ -1,1 +1,139 @@
-﻿
+﻿@page "/search"
+@using CocktailProject
+@inject HttpClient Http
+@inject IConfiguration Configuration
+@using System.Text.Json;
+
+<h3>Cocktail Search</h3>
+
+<input type="text" @bind="searchQuery" placeholder="Enter cocktail name" class="form-control" />
+<button class="btn btn-primary m-3" @onclick="SearchCocktails">Search</button>
+
+@if (cocktails != null && cocktails.Count > 0)
+{
+<div class="cocktail-cards">
+    @foreach (Cocktail cocktail in cocktails)
+    {
+        <div class="cocktail-card m-3 border border-dark rounded p-3">
+            <h4>@cocktail.Name</h4>
+            <p><strong>Category:</strong> @cocktail.Category</p>
+            <p><strong>Glass:</strong> @cocktail.Glass</p>
+            <p><strong>Preparation:</strong> @cocktail.Preparation</p>
+            <ul>
+                @foreach (var ingredient in cocktail.Ingredients)
+                {
+                    @if (ingredient.Unit != null)
+                    {
+                        <li>
+                            <span>@ingredient.Amount@ingredient.Unit</span>
+                            <p><span>@ingredient.IngredientName</span></p>
+                        </li>
+                    }
+                }
+            </ul>
+        </div>
+    }
+</div>
+}
+else if (isLoading)
+{
+    <p>Loading...</p>
+}
+
+else if (searchQuery != null && searchQuery.Length > 0 && cocktails == null)
+{
+    <p>No cocktails found.</p>
+}
+
+@code {
+    private string searchQuery;
+    private List<Cocktail> cocktails;
+    private string result = string.Empty;
+    private bool isLoading;
+
+    private async Task SearchCocktails()
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery)) return;
+
+        isLoading = true;
+
+        try
+        {
+            var apiKey = Configuration["ApiKey"];
+            // Build the HTTP request
+            var request = new HttpRequestMessage
+                {
+                    Method = HttpMethod.Get,
+                    RequestUri = new Uri($"https://api.apiverve.com/v1/cocktail?name={searchQuery}"),
+                };
+            request.Headers.Add("x-api-key", apiKey);
+            request.Headers.Add("Accept", "application/json");
+
+            // Send the request
+            using var response = await Http.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadAsStringAsync();
+            using var jsonDoc = JsonDocument.Parse(result);
+
+            // Assign the cocktails list to the cocktails variable
+            var cocktailsArray = jsonDoc.RootElement.GetProperty("data").GetProperty("cocktails").EnumerateArray();
+
+            List<Cocktail> cocktailList = new List<Cocktail>();
+
+            foreach (var cocktailElement in cocktailsArray)
+            {
+                var cocktail = new Cocktail
+                    {
+                        Name = cocktailElement.GetProperty("name").GetString(),
+                        Glass = cocktailElement.GetProperty("glass").GetString(),
+                        Category = cocktailElement.GetProperty("category").GetString(),
+                        Preparation = cocktailElement.GetProperty("preparation").GetString(),
+                        Garnish = cocktailElement.TryGetProperty("garnish", out JsonElement garnishElement) ? garnishElement.GetString() : null,
+                        Ingredients = new List<Ingredient>()
+                    };
+
+                // Accessing the ingredients array
+                var ingredientsArray = cocktailElement.GetProperty("ingredients").EnumerateArray();
+                foreach (var ingredientElement in ingredientsArray)
+                {
+                    var ingredient = new Ingredient();
+
+                    if (ingredientElement.TryGetProperty("ingredient", out JsonElement ingredientName))
+                    {
+                        ingredient.IngredientName = ingredientName.GetString();
+                    }
+                    if (ingredientElement.TryGetProperty("label", out JsonElement label))
+                    {
+                        ingredient.Label = label.GetString();
+                    }
+                    if (ingredientElement.TryGetProperty("unit", out JsonElement unit))
+                    {
+                        ingredient.Unit = unit.GetString();
+                    }
+                    if (ingredientElement.TryGetProperty("amount", out JsonElement amount))
+                    {
+                        ingredient.Amount = amount.GetDouble();
+                    }
+                    if (ingredientElement.TryGetProperty("special", out JsonElement special))
+                    {
+                        ingredient.Special = special.GetString();
+                    }
+
+                    cocktail.Ingredients.Add(ingredient);
+                }
+
+                cocktailList.Add(cocktail);
+                cocktails = cocktailList;
+                Console.WriteLine(cocktailList);
+            }
+
+
+        }
+        catch (Exception e)
+        {
+            cocktails = null;
+        }
+
+        isLoading = false;
+    }
+}
